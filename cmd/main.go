@@ -18,31 +18,82 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+
+	"helm.sh/helm/v3/pkg/cli"
 )
 
-const rootCmdLongUsage = ``
+const globalUsage = `This plugin manages Helm release locks using Kubernetes leader election.
+It checks if a Helm release is in a deployed state, and if not, verifies
+if there's an active lock preventing deployment. If the lock has timed out,
+it performs a rollback operation. After it runs the specified Helm command.`
 
-// Run the root command for the helm-lock CLI application.
+// Run the main command for the helm-lock CLI application.
 func Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	lockCommand := newLockCommand()
-
-	cmd := cobra.Command{
-		Use:   "helm lock",
-		Short: "Manage Helm release locks",
-		Long:  rootCmdLongUsage,
-		Args:  lockCommand.Args,
-		RunE:  lockCommand.RunE,
+	opts := &lockOptions{
+		timeout:      defaultLockTimeout,
+		helmSettings: cli.New(),
+		helmFlags:    getAllFlags(),
 	}
 
-	cmd.Flags().AddFlagSet(lockCommand.Flags())
-	cmd.AddCommand(newVersionCmd(), lockCommand)
+	cmd := &cobra.Command{
+		Use:   "lock [HELM_COMMAND] [ARGS...] [flags]",
+		Short: "Execute Helm commands with distributed locking",
+		Long:  globalUsage,
+		Example: strings.Join([]string{
+			"  helm lock secrets upgrade my-release ./my-chart",
+			"  helm lock upgrade my-release ./my-chart --lock-timeout 5m",
+		}, "\n"),
+		Args: cobra.MinimumNArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.helmCommand = args[0]
+			opts.helmArgs = args[1:]
+
+			// debug run
+			if opts.helmCommand == "lock" {
+				opts.helmCommand = args[1]
+				opts.helmArgs = args[2:]
+			}
+
+			if n := len(opts.helmArgs); n > 0 {
+				if n > 2 {
+					n--
+				}
+
+				opts.releaseName = opts.helmArgs[n-1]
+			}
+
+			return runLockCommand(cmd.Context(), opts)
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
 
 	cmd.SetHelpCommand(&cobra.Command{}) // Disable the help command
 
-	return cmd.ExecuteContext(ctx)
+	f := cmd.Flags()
+	f.DurationVar(&opts.timeout, "lock-timeout", defaultLockTimeout, "Lock timeout duration")
+
+	opts.helmSettings.AddFlags(f)
+
+	err := cmd.ExecuteContext(ctx)
+	if err != nil {
+		errorString := err.Error()
+		if strings.Contains(errorString, "arg(s)") || strings.Contains(errorString, "required") {
+			fmt.Fprintf(os.Stderr, "Error: %s\n\n", errorString)
+			fmt.Fprintln(os.Stderr, cmd.UsageString())
+		}
+	}
+
+	return err
 }

@@ -1,7 +1,7 @@
 name: lock
 version: "0.0.1"
 usage: Check concoronsy before deploy
-description: ""
+description: Before deploying a Helm chart, this plugin checks for any existing concurrency locks to prevent overlapping deployments.
 useTunnel: true
 platformCommand:
   - command: ${HELM_PLUGIN_DIR}/bin/lock
