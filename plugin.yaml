@@ -1,0 +1,14 @@
+name: lock
+version: "0.0.1"
+usage: Check concoronsy before deploy
+description: ""
+useTunnel: true
+platformCommand:
+  - command: ${HELM_PLUGIN_DIR}/bin/lock
+platformHooks:
+  install:
+    - command: ${HELM_PLUGIN_DIR}/install-binary.sh
+  update:
+    - command: ${HELM_PLUGIN_DIR}/install-binary.sh
+      args:
+        - -u

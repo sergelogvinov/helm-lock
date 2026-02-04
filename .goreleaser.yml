@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+project_name: helm-lock
+
+builds:
+  - id: default
+    main: .
+    binary: bin/lock
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -X github.com/sergelogvinov/helm-lock/cmd.Version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    ids:
+      - default
+    formats: ["tgz"]
+    name_template: '{{ .ProjectName }}-{{ if eq .Os "darwin" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    wrap_in_directory: lock
+    files:
+      - README.md
+      - plugin.yaml
+      - LICENSE
