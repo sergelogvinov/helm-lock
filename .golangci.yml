@@ -132,6 +132,5 @@ formatters:
       sections:
         - standard # Captures all standard packages if they do not match another section.
         - default # Contains all imports that could not be matched to another section type.
-        - prefix(github.com/sergelogvinov) # Groups all imports with the specified Prefix.
+        - prefix(helm.sh) # Groups all imports with the specified Prefix.
         - prefix(k8s.io) # Groups all imports with the specified Prefix.
-        - prefix(sigs.k8s.io) # Groups all imports with the specified Prefix.

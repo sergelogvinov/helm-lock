@@ -14,5 +14,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package cmd provides the command-line interface commands for the helm-resources application.
+// Package cmd provides the command-line interface commands for the helm lock application.
 package cmd

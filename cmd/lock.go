@@ -17,32 +17,166 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
 	"strings"
+	"time"
 
-	"github.com/spf13/cobra"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/release"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/klog/v2"
 )
 
 const (
-	globalUsage = ``
+	defaultLockTimeout = 10 * time.Minute
+	lockPrefix         = "helm-lock-"
 )
 
-func newLockCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "lock [RELEASE] [flags]",
-		Short: "Manage Helm release locks",
-		Long:  globalUsage,
-		Example: strings.Join([]string{
-			"  helm lock my-release",
-			"  helm lock my-release --namespace production",
-			"  helm lock my-release -o json",
-		}, "\n"),
-		Args: cobra.ExactArgs(1),
-		RunE: runResources,
-	}
+// lockOptions holds the configuration for the lock command
+type lockOptions struct {
+	releaseName string
+	timeout     time.Duration
 
-	return cmd
+	helmSettings *cli.EnvSettings
+	helmCommand  string
+	helmFlags    []string
+	helmArgs     []string
 }
 
-func runResources(_ *cobra.Command, _ []string) error {
+func runLockCommand(ctx context.Context, opts *lockOptions) error {
+	log.SetFlags(0)
+
+	if opts.releaseName == "" {
+		return fmt.Errorf("release name is required")
+	}
+
+	config, err := opts.helmSettings.RESTClientGetter().ToRESTConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get kubernetes config: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+
+	actionConfig := new(action.Configuration)
+	if err := actionConfig.Init(opts.helmSettings.RESTClientGetter(), opts.helmSettings.Namespace(), os.Getenv("HELM_DRIVER"), func(_ string, _ ...any) {}); err != nil {
+		return fmt.Errorf("failed to initialize Helm action config: %w", err)
+	}
+
+	log.Printf("Checking release '%s' in namespace '%s'", opts.releaseName, opts.helmSettings.Namespace())
+
+	releaseStatus, err := getReleaseStatus(actionConfig, opts.releaseName)
+	if err != nil {
+		return fmt.Errorf("failed to check release status: %w", err)
+	}
+
+	lockName := lockPrefix + opts.releaseName
+	if err := acquireLockAndExecute(ctx, clientset, actionConfig, opts, lockName, opts.helmSettings.Namespace(), releaseStatus); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// acquireLockAndExecute acquires a lock, performs rollback if needed, executes helm command, then releases lock
+func acquireLockAndExecute(ctx context.Context, client kubernetes.Interface, actionConfig *action.Configuration, opts *lockOptions, lockName, namespace string, releaseStatus release.Status) error {
+	lockCtx, cancel := context.WithTimeout(ctx, opts.timeout)
+	defer cancel()
+
+	if !opts.helmSettings.Debug {
+		lockCtx = klog.NewContext(lockCtx, klog.TODO().V(1))
+	}
+
+	identity := fmt.Sprintf("helm-lock-%s-%d", opts.helmCommand, time.Now().Unix())
+
+	lock, err := resourcelock.New(
+		resourcelock.LeasesResourceLock,
+		namespace,
+		lockName,
+		client.CoreV1(),
+		client.CoordinationV1(),
+		resourcelock.ResourceLockConfig{
+			Identity: identity,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create resource lock: %w", err)
+	}
+
+	operationCompleted := make(chan error, 1)
+
+	leaderElectionConfig := leaderelection.LeaderElectionConfig{
+		Lock:            lock,
+		ReleaseOnCancel: true,
+		LeaseDuration:   15 * time.Second,
+		RenewDeadline:   10 * time.Second,
+		RetryPeriod:     2 * time.Second,
+		Callbacks: leaderelection.LeaderCallbacks{
+			OnStartedLeading: func(ctx context.Context) {
+				log.Printf("Acquired lock '%s' for %s operation", lockName, opts.helmCommand)
+
+				if releaseStatus != release.StatusDeployed && releaseStatus != release.StatusUnknown {
+					log.Printf("Release status is '%s', performing rollback first", releaseStatus)
+
+					if err := performRollback(actionConfig, opts.releaseName); err != nil {
+						operationCompleted <- fmt.Errorf("rollback failed: %w", err)
+
+						return
+					}
+				}
+
+				if err := executeHelmCommand(ctx, opts); err != nil {
+					operationCompleted <- err
+
+					return
+				}
+
+				operationCompleted <- nil
+			},
+			OnStoppedLeading: func() {},
+		},
+	}
+
+	go func() {
+		leaderelection.RunOrDie(lockCtx, leaderElectionConfig)
+	}()
+
+	select {
+	case err := <-operationCompleted:
+		cancel()
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	case <-lockCtx.Done():
+		return fmt.Errorf("failed to acquire lock or operation timed out: %w", lockCtx.Err())
+	}
+}
+
+// executeHelmCommand executes the original helm command
+func executeHelmCommand(ctx context.Context, opts *lockOptions) error {
+	args := append([]string{opts.helmCommand}, opts.helmArgs...)
+	args = append(args, opts.helmFlags...)
+
+	log.Printf("Executing: helm %s\n\n", strings.Join(args, " "))
+
+	cmd := exec.CommandContext(ctx, "helm", args...)
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
 }

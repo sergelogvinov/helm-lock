@@ -20,6 +20,7 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 
 	"github.com/sergelogvinov/helm-lock/cmd"
 
@@ -31,12 +32,9 @@ import (
 
 func main() {
 	if err := cmd.Run(); err != nil {
-		var cmdErr cmd.Error
-		switch {
-		case errors.As(err, &cmdErr):
-			os.Exit(cmdErr.Code)
-		default:
-			os.Exit(1)
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			os.Exit(exitError.ExitCode())
 		}
 	}
 }
