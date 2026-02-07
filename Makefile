@@ -76,6 +76,11 @@ conformance: ## Conformance
 
 ############
 
+.PHONY: docs
+docs:
+	yq -i '.version = "$(TAG)"' plugin.yaml
+
+.PHONY: install
 install: build
 	mkdir -p $(HELM_HOME)/plugins/helm-lock/bin
 	cp bin/helm-lock-$(ARCH) $(HELM_HOME)/plugins/helm-lock/bin/lock
