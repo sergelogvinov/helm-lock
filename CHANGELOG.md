@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/sergelogvinov/helm-lock/compare/v3.1.0...v3.2.0) (2026-02-07)
+
+
+### Features
+
+* add checksum ([ce11e66](https://github.com/sergelogvinov/helm-lock/commit/ce11e66625319e8acfa2b461bf46b39a4f604d62))
+
 ## [3.1.0](https://github.com/sergelogvinov/helm-lock/compare/v3.0.0...v3.1.0) (2026-02-04)
 
 
