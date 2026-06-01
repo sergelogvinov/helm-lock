@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/spf13/cobra v1.10.2
-	helm.sh/helm/v3 v3.20.2
+	helm.sh/helm/v3 v3.21.0
 	k8s.io/client-go v0.35.4
 	k8s.io/klog/v2 v2.140.0
 )
